@@ -453,7 +453,7 @@ public class BackdropLayerView: NSVisualEffectView {
             
             rect = CGRect(
                 x: xOffset,
-                y: CGFloat(newHeight) - menuBarHeight,
+                y: CGFloat(newHeight) - menuBarHeight + 1,
                 width: screenWidth,
                 height: NSScreen.main!.menuBarHeight
             )
@@ -471,7 +471,7 @@ public class BackdropLayerView: NSVisualEffectView {
             
             rect = CGRect(
                 x: 0,
-                y: CGFloat(newHeight) - menuBarHeight - yOffset,
+                y: CGFloat(newHeight) - menuBarHeight - yOffset + 1,
                 width: screenWidth,
                 height: NSScreen.main!.menuBarHeight
             )

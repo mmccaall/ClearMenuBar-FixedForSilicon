@@ -36,8 +36,8 @@ public class ShadowLayerView: NSView {
         let gradient = CAGradientLayer()
         gradient.frame = bounds
 
-        gradient.colors = (0...60).map { i in
-            let t = Double(i) / 60
+        gradient.colors = (0...120).map { i in
+            let t = Double(i) / 120
             let eased = t * t * (3 - 2 * t)
             return NSColor.black.withAlphaComponent(1.0 * eased).cgColor
         }
