@@ -17,6 +17,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     var preferencesWindow: NSWindow?
         
+    var menuBarWindowController: MenuBarWindowController?
+    var shadowWindowController: ShadowWindowController?
+
     override init() {
         super.init()
         
@@ -33,8 +36,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             ],
             backing: .buffered, defer: false)
         
-        let menuBarWindowController = MenuBarWindowController(window: menuBarWindow)
-        menuBarWindowController.showWindow(self)
+        self.menuBarWindowController = MenuBarWindowController(window: menuBarWindow)
+        self.menuBarWindowController?.showWindow(self)
         
         let shadowWindow = ShadowWindow(
             contentRect: NSRect(x: 0,
@@ -46,8 +49,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered, defer: false
         )
         
-        let shadowWindowController = ShadowWindowController(window: shadowWindow)
-        shadowWindowController.showWindow(self)
+        self.shadowWindowController = ShadowWindowController(window: shadowWindow)
+        self.shadowWindowController?.showWindow(self)
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(screenParametersChanged),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func screenParametersChanged() {
+        // Debounce: macOS can fire this several times in quick succession.
+        NSObject.cancelPreviousPerformRequests(withTarget: self,
+                                               selector: #selector(repositionWindows),
+                                               object: nil)
+        perform(#selector(repositionWindows), with: nil, afterDelay: 0.5)
+    }
+    
+    @objc private func repositionWindows() {
+        // 1. Tear down the old windows
+        menuBarWindowController?.close()
+        shadowWindowController?.close()
+        menuBarWindowController = nil
+        shadowWindowController = nil
+        
+        // 2. Run the exact same setup code from applicationDidFinishLaunching
+        let screen = NSScreen.main ?? NSScreen.screens.first!
+        
+        let menuBarWindow = MenuBarWindow(
+            contentRect: NSRect(x: 0, y: screen.frame.height - screen.menuBarHeight, width: screen.frame.width, height: screen.menuBarHeight),
+            styleMask: [], backing: .buffered, defer: false
+        )
+        
+        self.menuBarWindowController = MenuBarWindowController(window: menuBarWindow)
+        self.menuBarWindowController?.showWindow(self)
+        
+        let shadowWindow = ShadowWindow(
+            contentRect: NSRect(x: 0, y: screen.frame.height - (screen.menuBarHeight + 80), width: screen.frame.width, height: 80),
+            styleMask: [], backing: .buffered, defer: false
+        )
+        
+        self.shadowWindowController = ShadowWindowController(window: shadowWindow)
+        self.shadowWindowController?.showWindow(self)
     }
     
     override func awakeFromNib() {
@@ -91,7 +136,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ aNotification: Notification) {
-        // Insert code here to tear down your application
+        NotificationCenter.default.removeObserver(
+            self,
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {

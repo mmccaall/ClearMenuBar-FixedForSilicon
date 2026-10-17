@@ -257,6 +257,19 @@ public class BackdropLayerView: NSVisualEffectView {
         bindAllowReduceTransparency()
     }
     
+    public func refreshForScreenChange() {
+        self.layout()
+        self.viewDidChangeEffectiveAppearance()
+
+        DispatchQueue.main.async {
+            if let path = self.currentWallpaperPath {
+                self.updateMenuBarBackground(path: path)
+            } else if let windowID = self.getCurrentWallpaperWindowID() {
+                self.wallpaper?.contents = self.getWallpaperScreenshot(cgWindowID: windowID)
+            }
+        }
+    }
+
     public override func viewDidChangeEffectiveAppearance() {
         let systemAppearance: NSAppearance = NSApplication.shared.effectiveAppearance
         
