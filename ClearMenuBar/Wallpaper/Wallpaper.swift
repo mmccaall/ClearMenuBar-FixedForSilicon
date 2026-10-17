@@ -46,50 +46,47 @@ public enum Wallpaper {
     }
     
     public static func getLastWallpaperURL() -> URL? {
-        let task = Process()
-        task.launchPath = "/bin/sh"
-        task.arguments = ["-c", "log show --last 2m --style syslog --predicate 'subsystem==\"com.apple.wallpaper\" and category==\"image-cache\" and composedMessage contains \"BEGIN - Image cache lookup - url\"' | tail -n 1 | grep -o 'file:///.*,' | sed -e 's/\\,.*$//'"]
-
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.launch()
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
-            if let url = URL(string: String(output)) {
-                return url
-            }
-        } else { return nil }
+        // 1. Find the PID of the wallpaper extension process
+        let pgrepTask = Process()
+        pgrepTask.launchPath = "/usr/bin/pgrep"
+        pgrepTask.arguments = ["WallpaperImageExtension"]
         
-        return nil
-    }
-    
-    public static func getLastWallpaperURLFromLogs() -> URL? {
-        let store = try! OSLogStore.local()
-        let interval = store.position(timeIntervalSinceEnd: -60.0)
-        let predicate = NSPredicate(format: "subsystem == %@ AND category == %@ AND composedMessage CONTAINS %@", "com.apple.wallpaper", "image-cache", "BEGIN - Image cache lookup - url")
-        let entries = try! store.getEntries(with: [], at: interval, matching: predicate)
+        let pgrepPipe = Pipe()
+        pgrepTask.standardOutput = pgrepPipe
+        pgrepTask.launch()
         
-        var response: [String] = [""]
-        let regex = try! NSRegularExpression(pattern: "url: (file://[^,]+)", options: [])
-        
-        for e in entries {
-            if e.composedMessage.contains("BEGIN - Image cache lookup - url: file") {
-                response.append(e.composedMessage)
-            }
+        let pgrepData = pgrepPipe.fileHandleForReading.readDataToEndOfFile()
+        guard let pidString = String(data: pgrepData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !pidString.isEmpty else {
+            return nil // Process not found
         }
         
-        if let lastEntry = response.last {
-            let matches = regex.matches(in: lastEntry, options: [], range: NSRange(location: 0, length: lastEntry.utf16.count))
+        // 2. Run lsof on that PID to find open image files
+        let lsofTask = Process()
+        lsofTask.launchPath = "/usr/sbin/lsof"
+        lsofTask.arguments = ["-Fn", "-p", pidString] // -Fn gives machine-readable output
+        
+        let lsofPipe = Pipe()
+        lsofTask.standardOutput = lsofPipe
+        lsofTask.launch()
+        
+        let lsofData = lsofPipe.fileHandleForReading.readDataToEndOfFile()
+        guard let lsofOutput = String(data: lsofData, encoding: .utf8) else {
+            return nil
+        }
+        
+        // 3. Parse the output for image files
+        // lsof -Fn outputs lines like "n/path/to/file.png"
+        let lines = lsofOutput.components(separatedBy: .newlines)
+        let imageExtensions = ["png", "jpg", "jpeg", "heic", "tiff"]
+        
+        for line in lines {
+            guard line.hasPrefix("n/") else { continue }
+            let path = String(line.dropFirst()) // Remove the "n" prefix
+            let url = URL(fileURLWithPath: path)
             
-            for match in matches {
-                if let range = Range(match.range(at: 1), in: lastEntry) {
-                    let urlString = String(lastEntry[range])
-                    
-                    if let url = URL(string: urlString) {
-                        return url
-                    }
-                }
+            if imageExtensions.contains(url.pathExtension.lowercased()) {
+                return url
             }
         }
         
@@ -97,74 +94,8 @@ public enum Wallpaper {
     }
     
     public static func getCurrentWallpaperURL() -> URL? {
-        let task = Process()
-        task.launchPath = "/bin/sh"
-        task.arguments = ["-c", "log show --last 2s --style syslog --predicate 'subsystem==\"com.apple.wallpaper\" and category==\"image-cache\" and composedMessage contains \"BEGIN - Image cache lookup - url\"' | tail -n 1 | grep -o 'file:///.*,' | sed -e 's/\\,.*$//'"]
-
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.launch()
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
-            if let url = URL(string: String(output)) {
-                return url
-            }
-        } else { return nil }
-        
-        return nil
-    }
-    
-    public static func getCurrentWallpaperURLFromLogs() -> URL? {
-        let store = try! OSLogStore.local()
-        let interval = store.position(timeIntervalSinceEnd: -1.55)
-        let predicate = NSPredicate(format: "subsystem == %@ AND category == %@ AND composedMessage CONTAINS %@", "com.apple.wallpaper", "image-cache", "BEGIN - Image cache lookup - url")
-        let entries = try! store.getEntries(with: [], at: interval, matching: predicate)
-        
-        var response: [String] = [""]
-        let regex = try! NSRegularExpression(pattern: "url: (file://[^,]+)", options: [])
-        
-        for e in entries {
-            if e.composedMessage.contains("BEGIN - Image cache lookup - url: file") {
-                response.append(e.composedMessage)
-            }
-        }
-        
-        if let lastEntry = response.last {
-            let matches = regex.matches(in: lastEntry, options: [], range: NSRange(location: 0, length: lastEntry.utf16.count))
-            
-            for match in matches {
-                if let range = Range(match.range(at: 1), in: lastEntry) {
-                    let urlString = String(lastEntry[range])
-                    
-                    if let url = URL(string: urlString) {
-                        return url
-                    }
-                }
-            }
-        }
-        
-        return nil
-    }
-    
-    public static func listenToWallpaperChanges() {
-        let process = Process()
-        let pipe = Pipe()
-        
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/log")
-        process.arguments = ["stream", "--predicate", "subsystem=='com.apple.wallpaper' and category=='image-cache' and composedMessage contains 'BEGIN - Image cache lookup - url'"]
-        
-        process.standardOutput = pipe
-        process.launch()
-        
-        let fileHandle = pipe.fileHandleForReading
-        fileHandle.readInBackgroundAndNotify()
-        
-        NotificationCenter.default.addObserver(forName: FileHandle.readCompletionNotification, object: fileHandle, queue: nil) { notification in
-            if let data = notification.userInfo {
-                Swift.print(data)
-            }
-        }
+        // Fast refresh path: use lsof directly, no log scraping, no tail.
+        return getLastWallpaperURL()
     }
     
     /**
