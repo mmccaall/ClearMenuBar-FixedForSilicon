@@ -1,3 +1,12 @@
+### fixes added by this fork:
+
+- menu bar automatically updates when connecting to an external display
+- minor math fix for rendering on custom resolution
+- wallpaper replace logic fix for macos 14 Sonoma for Disabled Transparency mode
+- fix for menu bar not displaying when switching desktops on Disabled Transparency mode
+
+<i>tested on macos 14 Sonoma 13.3-inch display (should support 15 Sequoia as well)</i>
+
 # Clear Menu Bar
 
 > Make the macOS menu bar transparent.
