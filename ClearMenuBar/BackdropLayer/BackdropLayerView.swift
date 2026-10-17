@@ -7,7 +7,6 @@
 
 import SwiftUI
 import QuartzCore
-import BHSwiftOSLogStream
 import Swinject
 import Combine
 
@@ -35,9 +34,11 @@ public class BackdropLayerView: NSVisualEffectView {
     
     private var disposables = Set<AnyCancellable>()
     
-    private var logStreamDelegate: LogStreamDelegate?
-    private var logStreamObserver: LogStream?
-    
+    private var wallpaperPollTimer: Timer?
+    private var lastSeenWallpaperPath: String?
+
+    private var isSwitchingSpaces = false
+
     public final class BlendGroup {
         
         /// The notification posted upon deinit of a `BlendGroup`.
@@ -235,11 +236,10 @@ public class BackdropLayerView: NSVisualEffectView {
                 }
             }
         }
-        
-        logStreamDelegate = LogStreamDelegate()
-        logStreamObserver = LogStream.init(subsystem: "com.apple.wallpaper", delegate: logStreamDelegate!)
-        
+       
         NotificationCenter.default.addObserver(self, selector: #selector(wallpaperChanged(_:)), name: .wallpaperChanged, object: nil)
+
+        startWallpaperPolling()
         
         spaceChangeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification,
@@ -255,6 +255,28 @@ public class BackdropLayerView: NSVisualEffectView {
             }
         
         bindAllowReduceTransparency()
+    }
+
+    private func startWallpaperPolling() {
+        wallpaperPollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            guard !self.isSwitchingSpaces else { return }
+            
+            DispatchQueue.global(qos: .utility).async {
+                guard let currentPath = Wallpaper.getCurrent(screen: .main).compactMap({ $0 }).first else {
+                    return
+                }
+                
+                let normalizedPath = currentPath.resolvingSymlinksInPath().path
+                
+                DispatchQueue.main.async {
+                    guard !self.isSwitchingSpaces else { return }
+                    guard normalizedPath != self.lastSeenWallpaperPath else { return }
+                    self.lastSeenWallpaperPath = normalizedPath
+                    NotificationCenter.default.post(name: .wallpaperChanged, object: currentPath)
+                }
+            }
+        }
     }
     
     public func refreshForScreenChange() {
@@ -618,9 +640,8 @@ public class BackdropLayerView: NSVisualEffectView {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             spaceChangeObserver = nil
         }
-        NotificationCenter.default.removeObserver(self, name: .wallpaperChanged, object: nil)
-        logStreamObserver = nil
-        logStreamDelegate = nil
+        wallpaperPollTimer?.invalidate()
+        wallpaperPollTimer = nil
     }
 }
 
@@ -654,4 +675,8 @@ extension CGImage {
 
         return context.makeImage()
     }
+}
+
+extension Notification.Name {
+    static let wallpaperChanged = Notification.Name("wallpaperChanged")
 }
