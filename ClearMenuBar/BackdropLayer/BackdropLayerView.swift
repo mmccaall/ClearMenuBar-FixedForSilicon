@@ -37,6 +37,9 @@ public class BackdropLayerView: NSVisualEffectView {
     private var wallpaperPollTimer: Timer?
     private var lastSeenWallpaperPath: String?
 
+    private var cachedMenuBarCrop: NSImage?
+    private var cachedMenuBarCropPath: String?
+
     private var isSwitchingSpaces = false
 
     public final class BlendGroup {
@@ -245,12 +248,41 @@ public class BackdropLayerView: NSVisualEffectView {
             forName: NSWorkspace.activeSpaceDidChangeNotification,
             object: nil,
             queue: OperationQueue.main) { _ in
-                if self.staticWallpaperWorkaroundPath == nil,
-                   let windowID = self.getCurrentWallpaperWindowID() {
+
+                self.isSwitchingSpaces = true
+                
+                if self.staticWallpaperWorkaroundPath != nil {
+                    // Disabled Transparency mode: force the compositor to re-sort
+                    // window levels, otherwise the Dock's wallpaper window can sit
+                    // above our statusBar-level overlay after space transitions.
+                    DispatchQueue.main.async {
+                        CATransaction.begin()
+                        CATransaction.setDisableActions(true)
+                        self.layer?.isHidden = true
+                        CATransaction.commit()
+
+                        DispatchQueue.main.async {
+                            CATransaction.begin()
+                            CATransaction.setDisableActions(true)
+                            self.layer?.isHidden = false
+                            CATransaction.commit()
+
+                            self.window?.level = NSWindow.Level.statusBar
+                            self.window?.orderFrontRegardless()
+                            self.isSwitchingSpaces = false
+                        }
+                    }
+                } else if let windowID = self.getCurrentWallpaperWindowID() {
+                    // Normal mode: refresh the wallpaper snapshot from the Dock.
                     CATransaction.begin()
                     CATransaction.setAnimationDuration(0.0)
                     self.wallpaper?.contents = self.getWallpaperScreenshot(cgWindowID: windowID)
                     CATransaction.commit()
+                    
+                    self.isSwitchingSpaces = false
+                } else {
+                    // Neither branch ran — reset the flag so polling isn't stuck.
+                    self.isSwitchingSpaces = false
                 }
             }
         
@@ -282,6 +314,10 @@ public class BackdropLayerView: NSVisualEffectView {
     public func refreshForScreenChange() {
         self.layout()
         self.viewDidChangeEffectiveAppearance()
+
+        // // Clear the cache so it is forced to recalculate the crop for the NEW screen resolution
+        // cachedMenuBarCrop = nil
+        // cachedMenuBarCropPath = nil
 
         DispatchQueue.main.async {
             if let path = self.currentWallpaperPath {
@@ -350,23 +386,36 @@ public class BackdropLayerView: NSVisualEffectView {
                 modifyImageAndSetAsWallpaper(path: url)
             }
             
+            cachedMenuBarCrop = nil
+            cachedMenuBarCropPath = nil
+
             updateMenuBarBackground(path: url)
         }
     }
     
     func updateMenuBarBackground(path: URL) {
-        if let croppedImage = self.cropWallpaperBelowMenuBarArea(imagePath: path),
-           let isDirectory = Wallpaper.isWallpaperFromADirectory(screen: .main).first ?? false {
-            CATransaction.begin()
-            CATransaction.setAnimationDuration(isDirectory ? self.transitionDuration : 0.0)
-            
-            self.wallpaper?.contents = croppedImage
-            
-            CATransaction.commit()
-            
-            if (!isDirectory) {
-                appState.currentWallpaperPath = path
-            }
+        let normalizedPath = path.resolvingSymlinksInPath().path
+        
+        let croppedImage: NSImage?
+        if cachedMenuBarCropPath == normalizedPath, let cached = cachedMenuBarCrop {
+            croppedImage = cached
+        } else {
+            croppedImage = cropWallpaperBelowMenuBarArea(imagePath: path)
+            cachedMenuBarCrop = croppedImage
+            cachedMenuBarCropPath = normalizedPath
+        }
+        
+        guard let image = croppedImage else { return }
+        
+        let isDirectory = (Wallpaper.isWallpaperFromADirectory(screen: .main).first ?? nil) ?? false
+        
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(isDirectory ? self.transitionDuration : 0.0)
+        self.wallpaper?.contents = image
+        CATransaction.commit()
+        
+        if !isDirectory {
+            appState.currentWallpaperPath = path
         }
     }
     
